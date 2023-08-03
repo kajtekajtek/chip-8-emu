@@ -45,7 +45,7 @@ int main(int argc, char* argv[])
 	}
 
 	//create window, renderer and texture holding pixel data
-	window = SDL_CreateWindow("",SDL_WINDOWPOS_UNDEFINED,SDL_WINDOWPOS_UNDEFINED,window_width,window_height,0);
+	window = SDL_CreateWindow("CHIP-8",SDL_WINDOWPOS_UNDEFINED,SDL_WINDOWPOS_UNDEFINED,window_width,window_height,0);
 	renderer = SDL_CreateRenderer(window,-1,SDL_RENDERER_ACCELERATED);
 	texture = SDL_CreateTexture(renderer,SDL_PIXELFORMAT_ARGB8888,
 			SDL_TEXTUREACCESS_STREAMING,64,32);

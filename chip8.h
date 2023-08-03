@@ -2,6 +2,8 @@
 #include <string>
 #include <iostream>
 #include <SDL.h>
+#include <stdlib.h>
+#include <time.h>
 
 //macros for extracting nibbles from 4 digit hex numbers
 #define FIRST_NIBBLE(instr) (instr >> 12)

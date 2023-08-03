@@ -203,9 +203,14 @@ void Chip8::decodeAndExecute(const unsigned short& instr)
 	case 0xA:
 		I = NNN(instr);
 		break;
+	//BNNN - Jump with offset
 	case 0xB:
+		pc = &storage[NNN(instr) + registers[0x0]];
 		break;
+	//CXNN - generate random number, AND it with NN and put the result in VX
 	case 0xC:
+		std::srand(time(NULL));
+		registers[SECOND_NIBBLE(instr)] = (std::rand() % 0xFF) & NN(instr,0);
 		break;
 	//DXYN - Display sprite
 	case 0xD:
