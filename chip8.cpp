@@ -16,10 +16,7 @@ unsigned char delay_timer = 0;
 unsigned char sound_timer = 0;		//beep if >1
 
 //stack (16x entries)
-unsigned char* stack[16] = { nullptr, nullptr, nullptr, nullptr,
-				nullptr, nullptr, nullptr, nullptr,
-				nullptr, nullptr, nullptr, nullptr,
-				nullptr, nullptr, nullptr, nullptr };
+unsigned char* stack[16];
 //stack counter
 unsigned char sc = 0;
 
@@ -29,6 +26,24 @@ bool displayDraw = true;
 //pixel buffer
 unsigned char display_buffer[2048];
 
+//font
+unsigned char font[90] ={ 0xF0, 0x90, 0x90, 0x90, 0xF0,   // 0
+		          0x20, 0x60, 0x20, 0x20, 0x70,   // 1
+		          0xF0, 0x10, 0xF0, 0x80, 0xF0,   // 2
+			  0xF0, 0x10, 0xF0, 0x10, 0xF0,   // 3
+			  0x90, 0x90, 0xF0, 0x10, 0x10,   // 4
+			  0xF0, 0x80, 0xF0, 0x10, 0xF0,   // 5
+			  0xF0, 0x80, 0xF0, 0x90, 0xF0,   // 6
+			  0xF0, 0x10, 0x20, 0x40, 0x40,   // 7
+			  0xF0, 0x90, 0xF0, 0x90, 0xF0,   // 8
+			  0xF0, 0x90, 0xF0, 0x10, 0xF0,   // 9
+			  0xF0, 0x90, 0xF0, 0x90, 0x90,   // A
+			  0xE0, 0x90, 0xE0, 0x90, 0xE0,   // B
+			  0xF0, 0x80, 0x80, 0x80, 0xF0,   // C
+			  0xE0, 0x90, 0x90, 0x90, 0xE0,   // D
+			  0xF0, 0x80, 0xF0, 0x80, 0xF0,   // E
+			  0xF0, 0x80, 0xF0, 0x80, 0x80 }; // F
+
 //---Chip8-----------------------------------------------------------------
 
 void Chip8::init()
@@ -37,19 +52,39 @@ void Chip8::init()
 	for(int i=0; i < 16; ++i) registers[i] = 0;
 
 	//initialize stack
-	for (int i=0; i < 16; ++i) stack[i] = 0;
+	for (int i=0; i < 16; ++i) stack[i] = nullptr;
 
 	//initialize display buffer
 	for (int i = 0; i < 2048; ++i) display_buffer[i] = 0;
+
+	//initialize key states
+	for (int i = 0; i < 322; ++i) Keyboard::state[i] = 0;
+
+	//load font into memory
+	for (int i = 0; i < 90; ++i) storage[i] = font[i];
+
+	//initialize SDL with its modules
+	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) < 0) {
+		std::cout << "Error: Couldnt initialize SDL" << '\n';
+	}
+
+	//create window, renderer and texture (display handling)
+	window = SDL_CreateWindow("CHIP-8",SDL_WINDOWPOS_UNDEFINED,
+		SDL_WINDOWPOS_UNDEFINED,
+		window_width,window_height,0);
+	renderer = SDL_CreateRenderer(window,-1,SDL_RENDERER_ACCELERATED);
+	texture = SDL_CreateTexture(renderer,SDL_PIXELFORMAT_ARGB8888,
+		SDL_TEXTUREACCESS_STREAMING,64,32);
 }
 
 void Chip8::loadFile(const std::string& f)
 {
 	std::ifstream ifs {f,std::ios_base::binary};
-	if(!ifs) {
-		std::cout << "Error: can't open file " << f << '\n';
-		return;
+
+	if(!ifs) { 
+		throw std::runtime_error("Error: can't open file " + f + '\n');
 	}
+	
 	//point program counter to memory location 0x200
 	pc = &storage[0x200];
 	//load bytes from file to memory adress 0x200 to 0xEAO
@@ -142,55 +177,64 @@ void Chip8::decodeAndExecute(const unsigned short& instr)
 			break;
 		//8XY1 - VX is set to VX OR VY
 		case 0x1:
+			registers[0xF] = 0;
 			registers[SECOND_NIBBLE(instr)] = 
 				registers[SECOND_NIBBLE(instr)] | registers[THIRD_NIBBLE(instr)];
 			break;
 		//8XY2 - VX is set to VX AND VY
 		case 0x2:
+			registers[0xF] = 0;
 			registers[SECOND_NIBBLE(instr)] = 
 				registers[SECOND_NIBBLE(instr)] & registers[THIRD_NIBBLE(instr)];
 			break;
 		//8XY3 - VX is set to VX XOR VY
 		case 0x3:
+			registers[0xF] = 0;
 			registers[SECOND_NIBBLE(instr)] = 
 				registers[SECOND_NIBBLE(instr)] ^ registers[THIRD_NIBBLE(instr)];
 			break;
 		//8XY4 - VX is set to VX + VY (VF = 1 if overflow)
-		case 0x4:
+		case 0x4: {
+			bool overflow = false;
 			if (registers[SECOND_NIBBLE(instr)] + registers[THIRD_NIBBLE(instr)] > 0xFF)
-				registers[0xF] = 1;
-			else
-				registers[0xF] = 0;
+				overflow = true;
 			registers[SECOND_NIBBLE(instr)] = 
 				registers[SECOND_NIBBLE(instr)] + registers[THIRD_NIBBLE(instr)];
+			if (overflow) registers[0xF] = 1;
+			else registers[0xF] = 0;
 			break;
+			 }
 		//8XY5 - VX is set to VX - VY
-		case 0x5:
-			if (registers[SECOND_NIBBLE(instr)] >= registers[THIRD_NIBBLE(instr)])
-				registers[0xF] = 1;
-			else if (registers[SECOND_NIBBLE(instr)] < registers[THIRD_NIBBLE(instr)])
-				registers[0xF] = 0;
-			registers[SECOND_NIBBLE(instr)] = 
-				registers[SECOND_NIBBLE(instr)] - registers[THIRD_NIBBLE(instr)];
+		case 0x5: {
+			bool underflow = false;
+			if (registers[SECOND_NIBBLE(instr)] < registers[THIRD_NIBBLE(instr)])
+				underflow = true;
+			registers[SECOND_NIBBLE(instr)] -= registers[THIRD_NIBBLE(instr)];
+			if (underflow) registers[0xF] = 0;
+			else registers[0xF] = 1;
 			break;
+		}
 		//8XY6 - load VY in to VX and shift 1 to the right (VF = shifted out bit)
-		case 0x6:
+		case 0x6: {
+			bool shifted_out = registers[THIRD_NIBBLE(instr)] & 0b00000001;
 			registers[SECOND_NIBBLE(instr)] = registers[THIRD_NIBBLE(instr)] >> 1;
-			registers[0xF] = registers[THIRD_NIBBLE(instr)] & 0b00000001;
+			registers[0xF] = shifted_out;
 			break;
+		}
 		//8XY7 - VX is set to VY - VX
 		case 0x7:
+			registers[SECOND_NIBBLE(instr)] = 
+				registers[THIRD_NIBBLE(instr)] - registers[SECOND_NIBBLE(instr)];
 			if (registers[THIRD_NIBBLE(instr)] >= registers[SECOND_NIBBLE(instr)])
 				registers[0xF] = 1;
 			else if (registers[THIRD_NIBBLE(instr)] < registers[SECOND_NIBBLE(instr)])
 				registers[0xF] = 0;
-			registers[SECOND_NIBBLE(instr)] = 
-				registers[THIRD_NIBBLE(instr)] - registers[SECOND_NIBBLE(instr)];
 			break;
-		//8XY6 - load VY in to VX and shift 1 to the left (VF = shifted out bit)
+		//8XYE - load VY in to VX and shift 1 to the left (VF = shifted out bit)
 		case 0xE:
+			bool shifted_out = registers[THIRD_NIBBLE(instr)] & 0b10000000;
 			registers[SECOND_NIBBLE(instr)] = registers[THIRD_NIBBLE(instr)] << 1;
-			registers[0xF] = registers[THIRD_NIBBLE(instr)] & 0b00000001;
+			registers[0xF] = shifted_out;
 			break;
 		}
 		break;
@@ -217,8 +261,86 @@ void Chip8::decodeAndExecute(const unsigned short& instr)
 		Display::drawSprite(instr);
 		break;
 	case 0xE:
+		switch (NN(instr,0)) {
+		//EX9E - skip next instruction if the key corresponding to value in VX is pressed
+		case 0x9E:
+			if (Keyboard::state[Keyboard::scancodes[registers[SECOND_NIBBLE(instr)]]])
+				pc += 2;
+			break;
+		//EXA1 - skip next instruction if the key corresponding to value in VX is not pressed
+		case 0xA1:
+			if (!Keyboard::state[Keyboard::scancodes[registers[SECOND_NIBBLE(instr)]]])
+				pc += 2;
+			break;
+		}
 		break;
 	case 0xF:
+		switch (NN(instr,0)) {
+		//FX07 - set VX to the current value of the delay timer
+		case 0x07:
+			registers[SECOND_NIBBLE(instr)] = delay_timer;
+			break;
+		//FX15 - set the delay timer to the value in VX
+		case 0x15:
+			delay_timer = registers[SECOND_NIBBLE(instr)];
+			break;
+		//FX18 - set the sound timer to the value in VX
+		case 0x18:
+			sound_timer = registers[SECOND_NIBBLE(instr)];
+			break;
+		//FX1E - add to index
+		case 0x1E:
+			//set VF to 1 if I overflows
+			if (I + registers[SECOND_NIBBLE(instr)] > 0xFFF) registers[0xF] = 1;
+			I += registers[SECOND_NIBBLE(instr)];;
+			break;
+		//FX0A - get key (wait for input;store hexadecimal value of pressed key in VX)
+		case 0x0A: {
+			SDL_Event event;
+			bool key_released = false;
+			while (!key_released) {
+				while(SDL_PollEvent(&event)!=0) {
+					if (event.type == SDL_KEYUP) {
+						for (int i = 0; i < 16; ++i) {
+						if(event.key.keysym.scancode
+							== Keyboard::scancodes[i])
+							registers[SECOND_NIBBLE(instr)] = i;
+						}
+						key_released = true;
+					}
+				}
+			}	
+			break;
+			}
+		//FX29 - font character (I is set to the addres of the hex character in VX)
+		case 0x29:
+			I = SECOND_NIBBLE(instr) * 5;
+			break;
+		//FX33 - binary-coded decimal conversion (convert the number
+		//in VX to three decimal digits and store them at the I address)
+		case 0x33:
+			storage[I] = registers[SECOND_NIBBLE(instr)] / 100;
+			storage[I+1] = (registers[SECOND_NIBBLE(instr)] % 100) / 10;
+			storage[I+2] = registers[SECOND_NIBBLE(instr)] % 10;
+			break;
+		//ZDEBUGOWAC F6 I F5
+		//FX55 - store register values in memory
+		case 0x55:
+			for (int i = 0; i <= SECOND_NIBBLE(instr); ++i)
+				storage[I + i] = registers[i];
+			//save and load opcodes increment index register as
+			//original COSMAC VIP interpreter
+			I += SECOND_NIBBLE(instr) + 1;
+			break;
+		//FX65 - load values from memory to registers
+		case 0x65:
+			for (int i = 0; i <= SECOND_NIBBLE(instr); ++i) 
+				registers[i] = storage[I + i];
+			//save and load opcodes increment index register as
+			//original COSMAC VIP interpreter
+			I += SECOND_NIBBLE(instr) + 1;
+			break;
+		}
 		break;
 	default:
 		std::cout << "Error: couldn't decode instruction" << '\n';
@@ -226,6 +348,46 @@ void Chip8::decodeAndExecute(const unsigned short& instr)
 	}
 }
 
+//main program loop
+void Chip8::loop()
+{
+	//Fetch, decode and execute instructions
+	Chip8::decodeAndExecute(Chip8::instructionFetch());
+	//event check
+	SDL_Event main_event;
+	while(SDL_PollEvent(&main_event)!=0) {
+		switch(main_event.type) {
+		case SDL_KEYDOWN:
+			if(main_event.key.keysym.scancode==ESCAPE)
+				isRunning = false;
+			Keyboard::state[main_event.key.keysym.scancode] = true;
+			break;
+		case SDL_KEYUP:
+			Keyboard::state[main_event.key.keysym.scancode] = false;
+			break;
+		case SDL_QUIT:
+			isRunning = false;
+		}
+	}
+
+	//update display
+	if(displayDraw) {
+		Display::draw(renderer,texture);
+		displayDraw = false;
+	}
+
+	SDL_Delay(1);
+}
+
+//callback function for SDL_AddTimer()(decrement timer registers by 1 every 17ms(60Hz))
+uint32_t Chip8::timerCallback(uint32_t interval, void* param)
+{
+	//decrement timer registers
+	if (delay_timer > 0) delay_timer -= 1;	
+	if (sound_timer > 0) sound_timer -= 1;	
+	//return next 17ms interval to timer
+	return 17;
+}
 //---Display---------------------------------------------------------------
 
 //update the display texture
